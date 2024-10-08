@@ -13,7 +13,12 @@ int init_socket(const char *IP, unsigned int port)
     // 允许端口复用
     int opt = 1;
     setsockopt(sock_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(int));
-    connect(sock_fd, (struct sockaddr *)&saddr, sizeof(saddr));
+    int ret = connect(sock_fd, (struct sockaddr *)&saddr, sizeof(saddr));
+    if (ret == -1)
+    {
+        perror("connect");
+        return -1;
+    }
 
     return sock_fd;
 }

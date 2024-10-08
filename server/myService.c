@@ -1,5 +1,9 @@
 #include "myService.h"
 
+void handleConnection(int epoll_fd, int listen_fd);
+void handleDisconnect(int epoll_fd, int disconnect_fd, MYSQL *conn);
+void handleMessage(char *jsonData, int target_fd, MYSQL *conn);
+
 void handleSignUp(cJSON *root, int target_fd, MYSQL *conn);
 void handleSignIn(cJSON *root, int target_fd, MYSQL *conn);
 void handleDeleteAccount(cJSON *root, int target_fd, MYSQL *conn);
@@ -31,7 +35,7 @@ void init_socket(int listen_fd)
     service_addr.sin_family = AF_INET;
     service_addr.sin_port = htons(8080);
     // 绑定本地IP，只接收来自本地的网络请求
-    if (inet_aton("127.0.0.1", &service_addr.sin_addr) == 0)
+    if (inet_aton("192.168.174.100", &service_addr.sin_addr) == 0)
     {
         printf("Invalid IP address\n");
         return;
@@ -62,7 +66,7 @@ void handleConnection(int epoll_fd, int listen_fd)
 
     // 将新连接加入epoll
     struct epoll_event event;
-    event.events = EPOLLIN;
+    event.events = EPOLLIN | EPOLLET;
     event.data.fd = conn_fd;
     if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, conn_fd, &event) == -1)
     {
@@ -74,7 +78,7 @@ void handleConnection(int epoll_fd, int listen_fd)
 void handleDisconnect(int epoll_fd, int disconnect_fd, MYSQL *conn)
 {
     // 查看该连接是否仍处于在线状态（以处理异常退出）
-    char sql_str[1000];
+    char sql_str[500];
 
     sprintf(sql_str, "select account from online_user where socket_fd=%d", disconnect_fd);
     puts(sql_str);
@@ -91,16 +95,27 @@ void handleDisconnect(int epoll_fd, int disconnect_fd, MYSQL *conn)
             // 并将在线状态设为0（离线）
             sprintf(sql_str, "update user set is_online=0 where account=%d", atoi(rec[0]));
             puts(sql_str);
-            mysql_real_query(conn, sql_str, strlen(sql_str)); // 偷个懒，不检查返回值了
-
+            mysql_free_result(r_set);
+            int ret1 = mysql_real_query(conn, sql_str, strlen(sql_str));
+            if (ret1 != 0)
+            {
+                puts("设为离线状态失败");
+                printf("SQL 错误: %s\n", mysql_error(conn));
+            }
             // 从在线用户表中删除
             sprintf(sql_str, "delete from online_user where account=%d", atoi(rec[0]));
             puts(sql_str);
-            mysql_real_query(conn, sql_str, strlen(sql_str)); // 偷个懒，不检查返回值了
+            int ret2 = mysql_real_query(conn, sql_str, strlen(sql_str));
+            if (ret2 != 0)
+            {
+                puts("从在线用户表中删除失败");
+                printf("SQL 错误: %s\n", mysql_error(conn));
+            }
         }
     }
 
     mysql_free_result(r_set);
+
     // 移出监听
     if (epoll_ctl(epoll_fd, EPOLL_CTL_DEL, disconnect_fd, NULL) == -1)
     {
@@ -111,8 +126,9 @@ void handleDisconnect(int epoll_fd, int disconnect_fd, MYSQL *conn)
 // 处理客户端发来的各种包
 void handleMessage(char *jsonData, int target_fd, MYSQL *conn)
 {
-    printf("thisMES：%s\n", jsonData);
+    puts(jsonData);
     cJSON *root = cJSON_Parse(jsonData);
+
     if (root == NULL)
     {
         printf("parse JSON failed!\n");
@@ -218,6 +234,10 @@ void handleMessage(char *jsonData, int target_fd, MYSQL *conn)
         printf("无效/未知的包!\n");
         break;
     }
+    // 清理工作
+    free(jsonData);
+    jsonData = NULL;
+    cJSON_Delete(root);
     root = NULL;
 }
 // 注册账号（昵称，密码）——返回账号
@@ -226,7 +246,7 @@ void handleSignUp(cJSON *root, int target_fd, MYSQL *conn)
     cJSON *jsonNickname = cJSON_GetObjectItem(root, "nickname");
     cJSON *jsonPassword = cJSON_GetObjectItem(root, "password");
 
-    char sql_str[1000];
+    char sql_str[500];
     sprintf(sql_str, "insert into user(password,nickname) values('%s','%s')", jsonPassword->valuestring, jsonNickname->valuestring);
     puts(sql_str);
 
@@ -257,7 +277,6 @@ void handleSignUp(cJSON *root, int target_fd, MYSQL *conn)
         mySend(generateERRORJSON("注册失败"), target_fd);
         printf("error!\n");
     }
-    cJSON_Delete(root);
 }
 // 登录(账号，密码)——返回用户信息(昵称)
 void handleSignIn(cJSON *root, int target_fd, MYSQL *conn)
@@ -266,7 +285,7 @@ void handleSignIn(cJSON *root, int target_fd, MYSQL *conn)
     cJSON *jsonUserAccount = cJSON_GetObjectItem(root, "userAccount");
     cJSON *jsonPassword = cJSON_GetObjectItem(root, "password");
 
-    char sql_str[1000];
+    char sql_str[500];
     sprintf(sql_str, "select nickname from user where account = %d AND password = '%s'", jsonUserAccount->valueint, jsonPassword->valuestring);
 
     puts(sql_str);
@@ -301,9 +320,6 @@ void handleSignIn(cJSON *root, int target_fd, MYSQL *conn)
     {
         mySend(generateERRORJSON("登录失败"), target_fd);
     }
-
-    mysql_free_result(r_set);
-    cJSON_Delete(root);
 }
 // 注销账号
 void handleDeleteAccount(cJSON *root, int target_fd, MYSQL *conn)
@@ -311,7 +327,7 @@ void handleDeleteAccount(cJSON *root, int target_fd, MYSQL *conn)
 
     cJSON *jsonUserAccount = cJSON_GetObjectItem(root, "userAccount");
 
-    char sql_str[1000];
+    char sql_str[500];
     sprintf(sql_str, "delete  from user where account = %d ", jsonUserAccount->valueint);
 
     puts(sql_str);
@@ -327,7 +343,6 @@ void handleDeleteAccount(cJSON *root, int target_fd, MYSQL *conn)
         // 返回错误码
         mySend(generateERRORJSON("注销失败"), target_fd);
     }
-    cJSON_Delete(root);
 }
 // 获取联系人列表（本人账号）——联系人列表
 void handleReturnContacts(cJSON *root, int target_fd, MYSQL *conn)
@@ -335,7 +350,7 @@ void handleReturnContacts(cJSON *root, int target_fd, MYSQL *conn)
 
     cJSON *jsonUserAccount = cJSON_GetObjectItem(root, "userAccount");
 
-    char sql_str[1000];
+    char sql_str[500];
     sprintf(sql_str, "select account,nickname,is_online from user where account in (select friend_account from contact where user_account = %d ) order by account", jsonUserAccount->valueint);
 
     puts(sql_str);
@@ -384,7 +399,6 @@ void handleReturnContacts(cJSON *root, int target_fd, MYSQL *conn)
     }
 
     mysql_free_result(r_set);
-    cJSON_Delete(root);
 }
 // 删除好友
 void handleRemoveContact(cJSON *root, int target_fd, MYSQL *conn)
@@ -392,7 +406,7 @@ void handleRemoveContact(cJSON *root, int target_fd, MYSQL *conn)
     cJSON *jsonUserAccount = cJSON_GetObjectItem(root, "userAccount");
     cJSON *jsonTargetAccount = cJSON_GetObjectItem(root, "targetAccount");
 
-    char sql_str[1000];
+    char sql_str[500];
     sprintf(sql_str, "delete from contact where user_account= %d AND friend_account=%d", jsonUserAccount->valueint, jsonTargetAccount->valueint);
     puts(sql_str);
 
@@ -407,7 +421,6 @@ void handleRemoveContact(cJSON *root, int target_fd, MYSQL *conn)
         // 返回错误码
         mySend(generateERRORJSON("删除失败"), target_fd);
     }
-    cJSON_Delete(root);
 }
 // 申请获取单聊聊天记录
 void handlePrivateChat(cJSON *root, int target_fd, MYSQL *conn)
@@ -416,7 +429,7 @@ void handlePrivateChat(cJSON *root, int target_fd, MYSQL *conn)
     cJSON *jsonUserAccount = cJSON_GetObjectItem(root, "userAccount");
     cJSON *jsonTargetAccount = cJSON_GetObjectItem(root, "targetAccount");
 
-    char sql_str[1000];
+    char sql_str[500];
     sprintf(sql_str, "SELECT user.nickname, single_message.send_time, single_message.content FROM single_message INNER JOIN user ON user.account = single_message.send_account WHERE (single_message.send_account = %d AND single_message.receive_account = %d) OR (single_message.send_account = %d AND single_message.receive_account = %d) ORDER BY single_message.send_time", jsonUserAccount->valueint, jsonTargetAccount->valueint, jsonTargetAccount->valueint, jsonUserAccount->valueint);
 
     puts(sql_str);
@@ -466,7 +479,6 @@ void handlePrivateChat(cJSON *root, int target_fd, MYSQL *conn)
     }
 
     mysql_free_result(r_set);
-    cJSON_Delete(root);
 }
 // 申请进行单聊(新开一个连接用来接收)
 void handlePrivateChatRequst(cJSON *root, int target_fd, MYSQL *conn)
@@ -474,7 +486,7 @@ void handlePrivateChatRequst(cJSON *root, int target_fd, MYSQL *conn)
 
     cJSON *jsonUserAccount = cJSON_GetObjectItem(root, "userAccount");
 
-    char sql_str[1000];
+    char sql_str[500];
     sprintf(sql_str, "UPDATE online_user SET private_chat_socket_fd=%d WHERE account =%d", target_fd, jsonUserAccount->valueint);
 
     puts(sql_str);
@@ -489,8 +501,6 @@ void handlePrivateChatRequst(cJSON *root, int target_fd, MYSQL *conn)
     { // 返回错误码
         mySend(generateERRORJSON("暂无历史消息"), target_fd);
     }
-
-    cJSON_Delete(root);
 }
 // 发送单聊消息（本人账号，目标账号，消息）
 void handleSendMessage(char *jsonData, cJSON *root, int target_fd, MYSQL *conn)
@@ -501,7 +511,7 @@ void handleSendMessage(char *jsonData, cJSON *root, int target_fd, MYSQL *conn)
     cJSON *jsonSendTime = cJSON_GetObjectItem(root, "sendTime");
 
     // 看看对方在不在线
-    char sql_str[1000];
+    char sql_str[500];
 
     sprintf(sql_str, "select private_chat_socket_fd from online_user where account=%d", jsonTargetAccount->valueint);
     puts(sql_str);
@@ -524,7 +534,7 @@ void handleSendMessage(char *jsonData, cJSON *root, int target_fd, MYSQL *conn)
     {
         printf("获取结果集失败或无结果: %s\n", mysql_error(conn));
     }
-
+    mysql_free_result(r_set);
     // 保存至数据库
     sprintf(sql_str, "insert into single_message(send_account,receive_account,content,send_time) values (%d,%d,'%s','%s')", jsonUserAccount->valueint, jsonTargetAccount->valueint, jsonContent->valuestring, jsonSendTime->valuestring);
     puts(sql_str);
@@ -542,14 +552,13 @@ void handleSendMessage(char *jsonData, cJSON *root, int target_fd, MYSQL *conn)
         mySend(generateERRORJSON("发送失败"), target_fd);
         printf("error!\n");
     }
-    cJSON_Delete(root);
 }
 // 申请添加好友——return OK
 void handleAddContact(cJSON *root, int target_fd, MYSQL *conn)
 {
     cJSON *jsonUserAccount = cJSON_GetObjectItem(root, "userAccount");
     cJSON *jsonTargetAccount = cJSON_GetObjectItem(root, "targetAccount");
-    char sql_str[1000];
+    char sql_str[500];
     MYSQL_RES *result = NULL;
     // 查一下好友表，看看是否对好友发好友申请，如果是直接返回错误码
     sprintf(sql_str, "SELECT * from contact WHERE user_account=%d AND friend_account = %d", jsonUserAccount->valueint, jsonTargetAccount->valueint);
@@ -561,7 +570,7 @@ void handleAddContact(cJSON *root, int target_fd, MYSQL *conn)
     {
         mySend(generateERRORJSON("好友已存在"), target_fd);
         mysql_free_result(result);
-        cJSON_Delete(root);
+
         return;
     }
 
@@ -628,8 +637,6 @@ void handleAddContact(cJSON *root, int target_fd, MYSQL *conn)
             }
         }
     }
-
-    cJSON_Delete(root);
 }
 // 获取好友验证消息表（本人账号）———返回验证消息表
 // 偷懒，只显示给别人发的好友申请，不显示别人给自己发的
@@ -637,7 +644,7 @@ void handleGetContactNotifications(cJSON *root, int target_fd, MYSQL *conn)
 {
     cJSON *jsonUserAccount = cJSON_GetObjectItem(root, "userAccount");
 
-    char sql_str[1000];
+    char sql_str[500];
     sprintf(sql_str, "select user.nickname,friend_request.request_account,friend_request.time from friend_request  INNER JOIN user on  friend_request.request_account=user.account AND target_account=%d ORDER BY time", jsonUserAccount->valueint);
 
     puts(sql_str);
@@ -686,14 +693,13 @@ void handleGetContactNotifications(cJSON *root, int target_fd, MYSQL *conn)
     }
 
     mysql_free_result(r_set);
-    cJSON_Delete(root);
 }
 // 同意好友申请（本人账号,目标账号）————return ok
 void handleAgreeAddContact(cJSON *root, int target_fd, MYSQL *conn)
 {
     cJSON *jsonUserAccount = cJSON_GetObjectItem(root, "userAccount");
     cJSON *jsonTargetAccount = cJSON_GetObjectItem(root, "targetAccount");
-    char sql_str[1000];
+    char sql_str[500];
 
     sprintf(sql_str, "delete from friend_request where target_account=%d AND request_account=%d", jsonUserAccount->valueint, jsonTargetAccount->valueint);
     puts(sql_str);
@@ -701,7 +707,7 @@ void handleAgreeAddContact(cJSON *root, int target_fd, MYSQL *conn)
     if (ret != 0)
     {
         mySend(generateERRORJSON("同意好友申请失败"), target_fd);
-        cJSON_Delete(root);
+
         return;
     }
     sprintf(sql_str, "insert into contact(user_account,friend_account) values (%d,%d),(%d,%d)", jsonTargetAccount->valueint, jsonUserAccount->valueint, jsonUserAccount->valueint, jsonTargetAccount->valueint);
@@ -723,7 +729,6 @@ void handleAgreeAddContact(cJSON *root, int target_fd, MYSQL *conn)
             mySend(generateERRORJSON("添加好友失败"), target_fd);
         }
     }
-    cJSON_Delete(root);
 }
 // 拒绝好友申请（本人账号,目标账号）———return ok
 void handleRefuseAddContact(cJSON *root, int target_fd, MYSQL *conn)
@@ -731,7 +736,7 @@ void handleRefuseAddContact(cJSON *root, int target_fd, MYSQL *conn)
     cJSON *jsonUserAccount = cJSON_GetObjectItem(root, "userAccount");
     cJSON *jsonTargetAccount = cJSON_GetObjectItem(root, "targetAccount");
 
-    char sql_str[1000];
+    char sql_str[500];
     sprintf(sql_str, "delete from friend_request where target_account=%d AND request_account=%d", jsonUserAccount->valueint, jsonTargetAccount->valueint);
     puts(sql_str);
 
@@ -746,14 +751,13 @@ void handleRefuseAddContact(cJSON *root, int target_fd, MYSQL *conn)
         // 返回错误码
         mySend(generateERRORJSON("拒绝好友申请失败"), target_fd);
     }
-    cJSON_Delete(root);
 }
 // 获取群列表（本人账号）————返回群列表
 void handleGetGroups(cJSON *root, int target_fd, MYSQL *conn)
 {
     cJSON *jsonUserAccount = cJSON_GetObjectItem(root, "userAccount");
 
-    char sql_str[1000];
+    char sql_str[500];
     sprintf(sql_str, "SELECT `group`.name, user_group.group_account FROM user_group INNER JOIN `group` ON `group`.account = user_group.group_account AND  user_group.user_account =%d", jsonUserAccount->valueint);
 
     puts(sql_str);
@@ -802,14 +806,13 @@ void handleGetGroups(cJSON *root, int target_fd, MYSQL *conn)
     }
 
     mysql_free_result(r_set);
-    cJSON_Delete(root);
 }
 // 申请获取群聊聊天记录（群ID）———返回群聊消息记录
 void handleGroupChat(cJSON *root, int target_fd, MYSQL *conn)
 {
     cJSON *jsonGroupAccount = cJSON_GetObjectItem(root, "groupAccount");
 
-    char sql_str[1000];
+    char sql_str[500];
     sprintf(sql_str, "select user.nickname,group_message.content,group_message.send_time FROM group_message INNER JOIN user ON user.account=group_message.send_account WHERE group_message.group_account=%d", jsonGroupAccount->valueint);
 
     puts(sql_str);
@@ -859,7 +862,6 @@ void handleGroupChat(cJSON *root, int target_fd, MYSQL *conn)
     }
 
     mysql_free_result(r_set);
-    cJSON_Delete(root);
 }
 // 申请邀请好友加入群聊（账号，好友账号，群ID）———return ok
 void handleInviteToGroup(cJSON *root, int target_fd, MYSQL *conn)
@@ -867,7 +869,7 @@ void handleInviteToGroup(cJSON *root, int target_fd, MYSQL *conn)
     cJSON *jsonUserAccount = cJSON_GetObjectItem(root, "userAccount");
     cJSON *jsonTargetAccount = cJSON_GetObjectItem(root, "targetAccount");
     cJSON *jsonGroupAccount = cJSON_GetObjectItem(root, "groupAccount");
-    char sql_str[1000];
+    char sql_str[500];
 
     // 先查一遍，对方是否已在群聊中
     sprintf(sql_str, " select *from user_group where user_account=%d AND group_account =%d", jsonTargetAccount->valueint, jsonGroupAccount->valueint);
@@ -908,8 +910,6 @@ void handleInviteToGroup(cJSON *root, int target_fd, MYSQL *conn)
             }
         }
     }
-    mysql_free_result(result);
-    cJSON_Delete(root);
 }
 // 申请发送群聊消息（账号,群ID,消息）———return ok
 void handleSendGroupMessage(char *jsonData, cJSON *root, int target_fd, MYSQL *conn)
@@ -920,39 +920,43 @@ void handleSendGroupMessage(char *jsonData, cJSON *root, int target_fd, MYSQL *c
     cJSON *jsonSendTime = cJSON_GetObjectItem(root, "sendTime");
 
     // 转发给正在群聊的群成员
-    char sql_str[1000];
+    char sql_str[500];
 
     sprintf(sql_str, "select group_chat_socket_fd from online_user where account IN (SELECT user_account FROM user_group WHERE group_account=%d) AND group_chat_socket_fd !=0 AND account!=%d", jsonGroupAccount->valueint, jsonUserAccount->valueint);
     puts(sql_str);
+
     mysql_real_query(conn, sql_str, strlen(sql_str)); // 偷个懒，不检查返回值了
     MYSQL_RES *r_set = NULL;
-    r_set = mysql_store_result(conn);
-    if (r_set)
-    {
-        int len = 0;
-        len = mysql_num_rows(r_set);
-        if (len > 0)
-        {
-            // 逐个转发
-            for (int i = 0; i < len; i++)
-            {
-                // 结果不为空，
-                MYSQL_ROW rec = mysql_fetch_row(r_set);
-                // 转发给目标用户
-                int len = strlen(jsonData);
-                int network_int = htonl(len);
-                write(atoi(rec[0]), &network_int, sizeof(int));
-                write(atoi(rec[0]), jsonData, len);
-                puts(jsonData);
-            }
-            printf("全部转发成功\n");
-        }
-        else
-        {
-            printf("获取结果集失败或无结果: %s\n", mysql_error(conn));
-        }
-    }
 
+    r_set = mysql_store_result(conn);
+
+    if (r_set && mysql_num_rows(r_set)) // 结果集存在且不为空
+    {
+
+        int index = mysql_num_rows(r_set);
+
+        // 逐个转发
+        for (int i = 0; i < index; i++)
+        {
+
+            // 结果不为空，
+            MYSQL_ROW rec = mysql_fetch_row(r_set);
+            // 转发给目标用户
+            int len = strlen(jsonData);
+            int network_int = htonl(len);
+
+            write(atoi(rec[0]), &network_int, sizeof(int));
+            write(atoi(rec[0]), jsonData, len);
+
+            puts(jsonData);
+        }
+        printf("全部转发成功\n");
+    }
+    else
+    {
+        printf("获取结果集失败或无结果: %s\n", mysql_error(conn));
+    }
+    mysql_free_result(r_set);
     // 保存至数据库
     sprintf(sql_str, "insert into group_message(send_account,group_account,send_time,content) values (%d,%d,'%s','%s')", jsonUserAccount->valueint, jsonGroupAccount->valueint, jsonSendTime->valuestring, jsonContent->valuestring);
     puts(sql_str);
@@ -968,7 +972,6 @@ void handleSendGroupMessage(char *jsonData, cJSON *root, int target_fd, MYSQL *c
         // 返回错误码
         mySend(generateERRORJSON("发送失败"), target_fd);
     }
-    cJSON_Delete(root);
 }
 // 申请进行群聊(新开一个连接用来接收)
 void handleGroupChatRequst(cJSON *root, int target_fd, MYSQL *conn)
@@ -976,7 +979,7 @@ void handleGroupChatRequst(cJSON *root, int target_fd, MYSQL *conn)
 
     cJSON *jsonUserAccount = cJSON_GetObjectItem(root, "userAccount");
 
-    char sql_str[1000];
+    char sql_str[500];
     sprintf(sql_str, "UPDATE online_user SET group_chat_socket_fd=%d WHERE account =%d", target_fd, jsonUserAccount->valueint);
 
     puts(sql_str);
@@ -991,8 +994,6 @@ void handleGroupChatRequst(cJSON *root, int target_fd, MYSQL *conn)
     { // 返回错误码
         mySend(generateERRORJSON("创建群聊链接失败"), target_fd);
     }
-
-    cJSON_Delete(root);
 }
 
 // 申请退出群聊（账号,群ID）———return ok
@@ -1001,7 +1002,7 @@ void handleLeaveGroup(cJSON *root, int target_fd, MYSQL *conn)
     cJSON *jsonUserAccount = cJSON_GetObjectItem(root, "userAccount");
     cJSON *jsonGroupAccount = cJSON_GetObjectItem(root, "groupAccount");
 
-    char sql_str[1000];
+    char sql_str[500];
     sprintf(sql_str, "DELETE FROM user_group WHERE user_account=%d AND group_account=%d", jsonUserAccount->valueint, jsonGroupAccount->valueint);
     puts(sql_str);
 
@@ -1016,7 +1017,6 @@ void handleLeaveGroup(cJSON *root, int target_fd, MYSQL *conn)
         // 返回错误码
         mySend(generateERRORJSON("发送失败"), target_fd);
     }
-    cJSON_Delete(root);
 }
 // 申请创建群聊（群名，用户账户，账号数组）——return ok
 void handleCreateGroup(cJSON *root, int target_fd, MYSQL *conn)
@@ -1026,7 +1026,7 @@ void handleCreateGroup(cJSON *root, int target_fd, MYSQL *conn)
     cJSON *jsonMembers = cJSON_GetObjectItem(root, "members");
     int len = cJSON_GetArraySize(jsonMembers);
 
-    char sql_str[1000];
+    char sql_str[500];
     // 通过事务处理多条插入语句
     mysql_autocommit(conn, 0);
     // 创建群
@@ -1063,8 +1063,6 @@ void handleCreateGroup(cJSON *root, int target_fd, MYSQL *conn)
     {
         mySend(generateERRORJSON("创建失败"), target_fd);
     }
-
-    cJSON_Delete(root);
 }
 // 获取群聊验证消息表（本人账号）———返回验证消息表
 // 偷个懒，只获取别人邀请该用户加群的验证消息
@@ -1072,7 +1070,7 @@ void handleGetGroupNotifications(cJSON *root, int target_fd, MYSQL *conn)
 {
     cJSON *jsonUserAccount = cJSON_GetObjectItem(root, "userAccount");
 
-    char sql_str[1000];
+    char sql_str[500];
     sprintf(sql_str, "SELECT group_invitation.id,group_invitation.invite_user_account, user.nickname, group_invitation.target_group_account,`group`.name,group_invitation.time FROM group_invitation INNER JOIN user ON user.account=group_invitation.invite_user_account AND target_user_account=%d INNER JOIN  `group` ON `group`.account=group_invitation.target_group_account ORDER BY group_invitation.time DESC", jsonUserAccount->valueint);
 
     puts(sql_str);
@@ -1125,7 +1123,6 @@ void handleGetGroupNotifications(cJSON *root, int target_fd, MYSQL *conn)
     }
 
     mysql_free_result(r_set);
-    cJSON_Delete(root);
 }
 // 同意加入群聊（邀请编号）————return ok
 void handleAgreeJoinGroup(cJSON *root, int target_fd, MYSQL *conn)
@@ -1135,7 +1132,7 @@ void handleAgreeJoinGroup(cJSON *root, int target_fd, MYSQL *conn)
     cJSON *jsonUserAccount = cJSON_GetObjectItem(root, "userAccount");
     cJSON *jsonGroupAccount = cJSON_GetObjectItem(root, "groupAccount");
 
-    char sql_str[1000];
+    char sql_str[500];
 
     sprintf(sql_str, "delete from group_invitation WHERE id=%d", jsonInviteId->valueint);
     puts(sql_str);
@@ -1143,7 +1140,7 @@ void handleAgreeJoinGroup(cJSON *root, int target_fd, MYSQL *conn)
     if (ret != 0)
     {
         mySend(generateERRORJSON("同意邀请失败"), target_fd);
-        cJSON_Delete(root);
+
         return;
     }
     sprintf(sql_str, "insert into user_group(user_account, group_account) VALUES (%d,%d)", jsonUserAccount->valueint, jsonGroupAccount->valueint);
@@ -1165,14 +1162,13 @@ void handleAgreeJoinGroup(cJSON *root, int target_fd, MYSQL *conn)
             mySend(generateERRORJSON("加入群聊失败"), target_fd);
         }
     }
-    cJSON_Delete(root);
 }
 // 拒绝加入群聊（邀请人账号，用户账户，群ID）————return ok
 void handleRefuseJoinGroup(cJSON *root, int target_fd, MYSQL *conn)
 {
     cJSON *jsonInviteId = cJSON_GetObjectItem(root, "inviteId");
 
-    char sql_str[1000];
+    char sql_str[500];
 
     sprintf(sql_str, "delete from group_invitation WHERE id=%d", jsonInviteId->valueint);
     puts(sql_str);
@@ -1185,8 +1181,6 @@ void handleRefuseJoinGroup(cJSON *root, int target_fd, MYSQL *conn)
     {
         mySend(generateERRORJSON("拒绝邀请失败"), target_fd);
     }
-
-    cJSON_Delete(root);
 }
 
 // 退出登录
@@ -1195,7 +1189,7 @@ void handleSignOut(cJSON *root, int target_fd, MYSQL *conn)
     cJSON *jsonUserAccount = cJSON_GetObjectItem(root, "userAccount");
 
     // 将该用户的在线状态置为0（离线）
-    char sql_str[1000];
+    char sql_str[500];
     sprintf(sql_str, "update user set is_online=0 where account=%d", jsonUserAccount->valueint);
     int ret1 = mysql_real_query(conn, sql_str, strlen(sql_str)); // 偷个懒，不检查返回值了
 
@@ -1210,6 +1204,27 @@ void handleSignOut(cJSON *root, int target_fd, MYSQL *conn)
     {
         mySend(generateERRORJSON("退出登录失败"), target_fd);
     }
+}
+// 调用handleConnection函数的线程任务函数
+void task_handleConnection(void *arg)
+{
+    task_args_t *args = (task_args_t *)arg; // 将 void* 转换为具体类型
 
-    cJSON_Delete(root);
+    handleConnection(args->epoll_fd, args->listen_fd);
+}
+
+// 调用handleDisconnect函数的线程任务函数
+void task_handleDisconnect(void *arg)
+{
+    task_args_t *args = (task_args_t *)arg; // 将 void* 转换为具体类型
+
+    handleDisconnect(args->epoll_fd, args->disconnect_fd, args->conn);
+}
+
+// 调用handleMessage函数的线程任务函数
+void task_handleMessage(void *arg)
+{
+    task_args_t *args = (task_args_t *)arg; // 将 void* 转换为具体类型
+
+    handleMessage(args->jsonData, args->target_fd, args->conn);
 }

@@ -1,0 +1,7 @@
+{
+    "files.associations": {
+        "mynetwork.h": "c",
+        "myservice.h": "c",
+        "mydb.h": "c"
+    }
+}

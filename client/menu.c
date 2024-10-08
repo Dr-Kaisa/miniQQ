@@ -85,15 +85,15 @@ void sign_in(User *user, int account, char *pwd)
     cJSON_AddStringToObject(send_data, "password", pwd);
 
     char *send_str = cJSON_Print(send_data);
+    puts(send_str);
     mySend(send_str, user->socket_fd);
     send_str = NULL;
 
     cJSON_Delete(send_data);
     // 等待回应
-    char recv_str[1000];
 
-    int ret = myRecv(recv_str, user->socket_fd);
-    if (ret == -1) // 接收失败
+    char *recv_str = myRecv(user->socket_fd);
+    if (recv_str == NULL) // 接收失败
     {
         printf("recv failed!\n");
         return;
@@ -102,6 +102,8 @@ void sign_in(User *user, int account, char *pwd)
     {
 
         cJSON *recv_data = cJSON_Parse(recv_str);
+        free(recv_str);
+        recv_str = NULL;
         if (recv_data == NULL)
         {
             printf("parse JSON failed!\n");
@@ -156,10 +158,9 @@ void sign_up(User *user, char *nickname, char *pwd)
 
     cJSON_Delete(send_data);
     // 等待回应
-    char recv_str[1000];
 
-    int ret = myRecv(recv_str, user->socket_fd);
-    if (ret == -1) // 接收失败
+    char *recv_str = myRecv(user->socket_fd);
+    if (recv_str == NULL) // 接收失败
     {
         printf("recv failed!\n");
         return;
@@ -168,6 +169,8 @@ void sign_up(User *user, char *nickname, char *pwd)
     {
 
         cJSON *recv_data = cJSON_Parse(recv_str);
+        free(recv_str);
+        recv_str = NULL;
         if (recv_data == NULL)
         {
             printf("parse JSON failed!\n");
@@ -205,10 +208,9 @@ void delete_account(User *user)
 
     cJSON_Delete(send_data);
     // 等待回应
-    char recv_str[1000];
 
-    int ret = myRecv(recv_str, user->socket_fd);
-    if (ret == -1) // 接收失败
+    char *recv_str = myRecv(user->socket_fd);
+    if (recv_str == NULL) // 接收失败
     {
         printf("recv failed!\n");
         return;
@@ -217,6 +219,8 @@ void delete_account(User *user)
     {
 
         cJSON *recv_data = cJSON_Parse(recv_str);
+        free(recv_str);
+        recv_str = NULL;
         if (recv_data == NULL)
         {
             printf("parse JSON failed!\n");
@@ -286,10 +290,8 @@ void sign_out(User *user)
 
     cJSON_Delete(send_data);
     // 等待回应
-    char recv_str[1000];
-
-    int ret = myRecv(recv_str, user->socket_fd);
-    if (ret == -1) // 接收失败
+    char *recv_str = myRecv(user->socket_fd);
+    if (recv_str == NULL) // 接收失败
     {
         printf("recv failed!\n");
         return;
@@ -298,6 +300,8 @@ void sign_out(User *user)
     {
 
         cJSON *recv_data = cJSON_Parse(recv_str);
+        free(recv_str);
+        recv_str = NULL;
         if (recv_data == NULL)
         {
             printf("parse JSON failed!\n");
@@ -365,10 +369,8 @@ void show_contacts_list(User *user)
 
     cJSON_Delete(send_data);
     // 等待回应
-    char recv_str[2000];
-
-    int ret = myRecv(recv_str, user->socket_fd);
-    if (ret == -1) // 接收失败
+    char *recv_str = myRecv(user->socket_fd);
+    if (recv_str == NULL) // 接收失败
     {
         printf("recv failed!\n");
         return;
@@ -377,6 +379,8 @@ void show_contacts_list(User *user)
     {
         // 创建一个名为root的JSON节点
         cJSON *root = cJSON_Parse(recv_str);
+        free(recv_str);
+        recv_str = NULL;
         if (root == NULL)
         {
             printf("parse JSON failed!\n");
@@ -451,25 +455,26 @@ void *thread_function(void *arg)
     pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
 
     // 持续接收消息
-    char recv_str[1000] = {0};
     while (1)
     {
-        int ret = myRecv(recv_str, *socket_fd);
+        char *recv_str = myRecv(*socket_fd);
 
-        if (ret == 0) // 接收成功
+        if (recv_str == NULL)
+        {
+
+            printf("接收失败\n");
+        }
+        else // 接收成功
         {
             // 创建一个名为root的JSON节点
             cJSON *data = cJSON_Parse(recv_str);
+            free(recv_str);
+            recv_str = NULL;
             // 打印
             printf("%s:%-100s%-20s\n", get_str_from_json(data, "nickname"), get_str_from_json(data, "content"), get_str_from_json(data, "sendTime"));
             // 清理
             cJSON_Delete(data);
         }
-        else
-        {
-            printf("接收失败\n");
-        }
-        sleep(1);
     }
 }
 // 给目标联系人发消息
@@ -479,16 +484,15 @@ void send_message(User *user, int targetAccount)
     show_chat_history(user, targetAccount);
 
     // 单开一个连接用来收消息
-    int new_fd = init_socket("127.0.0.1", 8080);
+    int new_fd = init_socket("192.168.174.100", 8080);
     // JSON序列化
     cJSON *send_data = cJSON_CreateObject();
     cJSON_AddNumberToObject(send_data, "type", REQUEST_PRIVATE_CHAT);
     cJSON_AddNumberToObject(send_data, "userAccount", user->account);
     char *send_str = cJSON_Print(send_data);
     mySend(send_str, new_fd);
-    char recv_str[1000];
-    int ret = myRecv(recv_str, new_fd);
-    if (ret == -1) // 接收失败
+    char *recv_str = myRecv(new_fd);
+    if (recv_str == NULL) // 接收失败
     {
         printf("recv failed!\n");
         return;
@@ -497,6 +501,8 @@ void send_message(User *user, int targetAccount)
     {
         // 创建一个名为root的JSON节点
         cJSON *root = cJSON_Parse(recv_str);
+        free(recv_str);
+        recv_str = NULL;
         if (root == NULL)
         {
             printf("parse JSON failed!\n");
@@ -554,10 +560,8 @@ void show_chat_history(User *user, int targetAccount)
     send_str = NULL;
     cJSON_Delete(send_data);
     // 等待回应
-    char recv_str[2000];
-
-    int ret = myRecv(recv_str, user->socket_fd);
-    if (ret == -1) // 接收失败
+    char *recv_str = myRecv(user->socket_fd);
+    if (recv_str == NULL) // 接收失败
     {
         printf("recv failed!\n");
         return;
@@ -566,6 +570,8 @@ void show_chat_history(User *user, int targetAccount)
     {
         // 创建一个名为root的JSON节点
         cJSON *root = cJSON_Parse(recv_str);
+        free(recv_str);
+        recv_str = NULL;
         if (root == NULL)
         {
             printf("parse JSON failed!\n");
@@ -616,11 +622,9 @@ void send_to_server(User *user, int targetAccount, char *content)
     cJSON_Delete(send_data);
 
     // 等待回应
-    char recv_str[1000] = {0};
+    char *recv_str = myRecv(user->socket_fd);
 
-    int ret = myRecv(recv_str, user->socket_fd);
-
-    if (ret == -1) // 接收失败
+    if (recv_str == NULL) // 接收失败
     {
         printf("recv failed!\n");
         return;
@@ -629,6 +633,8 @@ void send_to_server(User *user, int targetAccount, char *content)
     {
         // 创建一个名为root的JSON节点
         cJSON *root = cJSON_Parse(recv_str);
+        free(recv_str);
+        recv_str = NULL;
         if (root == NULL)
         {
             printf("parse JSON failed!\n");
@@ -662,11 +668,9 @@ void removeContact(User *user, int targetAccount)
     cJSON_Delete(send_data);
 
     // 等待回应
-    char recv_str[1000] = {0};
+    char *recv_str = myRecv(user->socket_fd);
 
-    int ret = myRecv(recv_str, user->socket_fd);
-
-    if (ret == -1) // 接收失败
+    if (recv_str == NULL) // 接收失败
     {
         printf("recv failed!\n");
         return;
@@ -675,6 +679,8 @@ void removeContact(User *user, int targetAccount)
     {
         // 创建一个名为root的JSON节点
         cJSON *root = cJSON_Parse(recv_str);
+        free(recv_str);
+        recv_str = NULL;
         if (root == NULL)
         {
             printf("parse JSON failed!\n");
@@ -708,10 +714,8 @@ void show_contact_notifications(User *user)
 
     cJSON_Delete(send_data);
     // 等待回应
-    char recv_str[1000];
-
-    int ret = myRecv(recv_str, user->socket_fd);
-    if (ret == -1) // 接收失败
+    char *recv_str = myRecv(user->socket_fd);
+    if (recv_str == NULL) // 接收失败
     {
         printf("recv failed!\n");
         return;
@@ -720,6 +724,8 @@ void show_contact_notifications(User *user)
     {
         // 创建一个名为root的JSON节点
         cJSON *root = cJSON_Parse(recv_str);
+        free(recv_str);
+        recv_str = NULL;
         if (root == NULL)
         {
             printf("parse JSON failed!\n");
@@ -803,11 +809,9 @@ void agree_add_contact(User *user, int targetAccount)
     cJSON_Delete(send_data);
 
     // 等待回应
-    char recv_str[1000] = {0};
+    char *recv_str = myRecv(user->socket_fd);
 
-    int ret = myRecv(recv_str, user->socket_fd);
-
-    if (ret == -1) // 接收失败
+    if (recv_str == NULL) // 接收失败
     {
         printf("recv failed!\n");
         return;
@@ -816,6 +820,8 @@ void agree_add_contact(User *user, int targetAccount)
     {
         // 创建一个名为root的JSON节点
         cJSON *root = cJSON_Parse(recv_str);
+        free(recv_str);
+        recv_str = NULL;
         if (root == NULL)
         {
             printf("parse JSON failed!\n");
@@ -852,11 +858,9 @@ void refuse_add_contact(User *user, int targetAccount)
     cJSON_Delete(send_data);
 
     // 等待回应
-    char recv_str[1000] = {0};
+    char *recv_str = myRecv(user->socket_fd);
 
-    int ret = myRecv(recv_str, user->socket_fd);
-
-    if (ret == -1) // 接收失败
+    if (recv_str == NULL) // 接收失败
     {
         printf("recv failed!\n");
         return;
@@ -865,6 +869,8 @@ void refuse_add_contact(User *user, int targetAccount)
     {
         // 创建一个名为root的JSON节点
         cJSON *root = cJSON_Parse(recv_str);
+        free(recv_str);
+        recv_str = NULL;
         if (root == NULL)
         {
             printf("parse JSON failed!\n");
@@ -904,11 +910,9 @@ void add_contact(User *user)
     cJSON_Delete(send_data);
 
     // 等待回应
-    char recv_str[1000] = {0};
+    char *recv_str = myRecv(user->socket_fd);
 
-    int ret = myRecv(recv_str, user->socket_fd);
-
-    if (ret == -1) // 接收失败
+    if (recv_str == NULL) // 接收失败
     {
         printf("recv failed!\n");
         return;
@@ -917,6 +921,8 @@ void add_contact(User *user)
     {
         // 创建一个名为root的JSON节点
         cJSON *root = cJSON_Parse(recv_str);
+        free(recv_str);
+        recv_str = NULL;
         if (root == NULL)
         {
             printf("parse JSON failed!\n");
@@ -984,11 +990,9 @@ void show_groups_list(User *user)
     cJSON_Delete(send_data);
 
     // 等待回应
-    char recv_str[2000];
+    char *recv_str = myRecv(user->socket_fd);
 
-    int ret = myRecv(recv_str, user->socket_fd);
-
-    if (ret == -1) // 接收失败
+    if (recv_str == NULL) // 接收失败
     {
         printf("recv failed!\n");
         return;
@@ -998,6 +1002,8 @@ void show_groups_list(User *user)
 
         // 创建一个名为root的JSON节点
         cJSON *root = cJSON_Parse(recv_str);
+        free(recv_str);
+        recv_str = NULL;
         if (root == NULL)
         {
             printf("parse JSON failed!\n");
@@ -1077,12 +1083,17 @@ void *thread_function_group_chat(void *arg)
     pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
 
     // 持续接收消息
-    char recv_str[1000] = {0};
+    char *recv_str = NULL;
     while (1)
     {
-        int ret = myRecv(recv_str, *socket_fd);
+        recv_str = myRecv(*socket_fd);
 
-        if (ret == 0) // 接收成功
+        if (recv_str == NULL) // 接收成功
+        {
+
+            printf("接收失败\n");
+        }
+        else
         {
             // 创建一个名为root的JSON节点
             cJSON *data = cJSON_Parse(recv_str);
@@ -1091,11 +1102,6 @@ void *thread_function_group_chat(void *arg)
             // 清理
             cJSON_Delete(data);
         }
-        else
-        {
-            printf("接收失败\n");
-        }
-        sleep(1);
     }
 }
 // 进行群聊
@@ -1105,16 +1111,20 @@ void send_message_to_group(User *user, int targetAccount)
     show_group_chat_history(user, targetAccount);
 
     // 单开一个连接用来收消息
-    int new_fd = init_socket("127.0.0.1", 8080);
+    int new_fd = init_socket("192.168.174.100", 8080);
+    // 连接失败则退出
+    if (new_fd == -1)
+    {
+        return;
+    }
     // JSON序列化
     cJSON *send_data = cJSON_CreateObject();
     cJSON_AddNumberToObject(send_data, "type", REQUEST_GROUP_CHAT);
     cJSON_AddNumberToObject(send_data, "userAccount", user->account);
     char *send_str = cJSON_Print(send_data);
     mySend(send_str, new_fd);
-    char recv_str[1000];
-    int ret = myRecv(recv_str, new_fd);
-    if (ret == -1) // 接收失败
+    char *recv_str = myRecv(new_fd);
+    if (recv_str == NULL) // 接收失败
     {
         printf("recv failed!\n");
         return;
@@ -1123,6 +1133,8 @@ void send_message_to_group(User *user, int targetAccount)
     {
         // 创建一个名为root的JSON节点
         cJSON *root = cJSON_Parse(recv_str);
+        free(recv_str);
+        recv_str = NULL;
         if (root == NULL)
         {
             printf("parse JSON failed!\n");
@@ -1179,10 +1191,8 @@ void show_group_chat_history(User *user, int targetAccount)
     send_str = NULL;
     cJSON_Delete(send_data);
     // 等待回应
-    char recv_str[2000];
-
-    int ret = myRecv(recv_str, user->socket_fd);
-    if (ret == -1) // 接收失败
+    char *recv_str = myRecv(user->socket_fd);
+    if (recv_str == NULL) // 接收失败
     {
         printf("recv failed!\n");
         return;
@@ -1191,6 +1201,8 @@ void show_group_chat_history(User *user, int targetAccount)
     {
         // 创建一个名为root的JSON节点
         cJSON *root = cJSON_Parse(recv_str);
+        free(recv_str);
+        recv_str = NULL;
         if (root == NULL)
         {
             printf("parse JSON failed!\n");
@@ -1202,7 +1214,7 @@ void show_group_chat_history(User *user, int targetAccount)
 
             cJSON *jsonMembers = cJSON_GetObjectItem(root, "messages");
             int len = cJSON_GetArraySize(jsonMembers);
-            // 逐一群消息
+            // 逐一解析群消息
             for (int i = 0; i < len; i++)
             {
                 cJSON *data = cJSON_GetArrayItem(jsonMembers, i);
@@ -1241,11 +1253,9 @@ void send_group_message_to_server(User *user, int targetAccount, char *content)
     cJSON_Delete(send_data);
 
     // 等待回应
-    char recv_str[1000] = {0};
+    char *recv_str = myRecv(user->socket_fd);
 
-    int ret = myRecv(recv_str, user->socket_fd);
-
-    if (ret == -1) // 接收失败
+    if (recv_str == NULL) // 接收失败
     {
         printf("recv failed!\n");
         return;
@@ -1254,6 +1264,8 @@ void send_group_message_to_server(User *user, int targetAccount, char *content)
     {
         // 创建一个名为root的JSON节点
         cJSON *root = cJSON_Parse(recv_str);
+        free(recv_str);
+        recv_str = NULL;
         if (root == NULL)
         {
             printf("parse JSON failed!\n");
@@ -1291,11 +1303,9 @@ void invite_add_group(User *user, int targetAccount)
     cJSON_Delete(send_data);
 
     // 等待回应
-    char recv_str[1000] = {0};
+    char *recv_str = myRecv(user->socket_fd);
 
-    int ret = myRecv(recv_str, user->socket_fd);
-
-    if (ret == -1) // 接收失败
+    if (recv_str == NULL) // 接收失败
     {
         printf("recv failed!\n");
         return;
@@ -1304,6 +1314,8 @@ void invite_add_group(User *user, int targetAccount)
     {
         // 创建一个名为root的JSON节点
         cJSON *root = cJSON_Parse(recv_str);
+        free(recv_str);
+        recv_str = NULL;
         if (root == NULL)
         {
             printf("parse JSON failed!\n");
@@ -1341,11 +1353,9 @@ void remove_group(User *user, int targetAccount)
     cJSON_Delete(send_data);
 
     // 等待回应
-    char recv_str[1000] = {0};
+    char *recv_str = myRecv(user->socket_fd);
 
-    int ret = myRecv(recv_str, user->socket_fd);
-
-    if (ret == -1) // 接收失败
+    if (recv_str == NULL) // 接收失败
     {
         printf("recv failed!\n");
         return;
@@ -1354,6 +1364,8 @@ void remove_group(User *user, int targetAccount)
     {
         // 创建一个名为root的JSON节点
         cJSON *root = cJSON_Parse(recv_str);
+        free(recv_str);
+        recv_str = NULL;
         if (root == NULL)
         {
             printf("parse JSON failed!\n");
@@ -1405,11 +1417,9 @@ void create_group(User *user)
     cJSON_Delete(send_data);
 
     // 等待回应
-    char recv_str[1000] = {0};
+    char *recv_str = myRecv(user->socket_fd);
 
-    int ret = myRecv(recv_str, user->socket_fd);
-
-    if (ret == -1) // 接收失败
+    if (recv_str == NULL) // 接收失败
     {
         printf("recv failed!\n");
         return;
@@ -1418,6 +1428,8 @@ void create_group(User *user)
     {
         // 创建一个名为root的JSON节点
         cJSON *root = cJSON_Parse(recv_str);
+        free(recv_str);
+        recv_str = NULL;
         if (root == NULL)
         {
             printf("parse JSON failed!\n");
@@ -1452,11 +1464,9 @@ void show_group_notifications(User *user)
     cJSON_Delete(send_data);
 
     // 等待回应
-    char recv_str[2000];
+    char *recv_str = myRecv(user->socket_fd);
 
-    int ret = myRecv(recv_str, user->socket_fd);
-
-    if (ret == -1) // 接收失败
+    if (recv_str == NULL) // 接收失败
     {
         printf("recv failed!\n");
         return;
@@ -1466,6 +1476,8 @@ void show_group_notifications(User *user)
 
         // 创建一个名为root的JSON节点
         cJSON *root = cJSON_Parse(recv_str);
+        free(recv_str);
+        recv_str = NULL;
         if (root == NULL)
         {
             printf("parse JSON failed!\n");
@@ -1551,11 +1563,9 @@ void agree_join_group(User *user, int id, int groupAccount)
     cJSON_Delete(send_data);
 
     // 等待回应
-    char recv_str[1000] = {0};
+    char *recv_str = myRecv(user->socket_fd);
 
-    int ret = myRecv(recv_str, user->socket_fd);
-
-    if (ret == -1) // 接收失败
+    if (recv_str == NULL) // 接收失败
     {
         printf("recv failed!\n");
         return;
@@ -1564,6 +1574,8 @@ void agree_join_group(User *user, int id, int groupAccount)
     {
         // 创建一个名为root的JSON节点
         cJSON *root = cJSON_Parse(recv_str);
+        free(recv_str);
+        recv_str = NULL;
         if (root == NULL)
         {
             printf("parse JSON failed!\n");
@@ -1599,11 +1611,9 @@ void refuse_join_group(User *user, int id)
     cJSON_Delete(send_data);
 
     // 等待回应
-    char recv_str[1000] = {0};
+    char *recv_str = myRecv(user->socket_fd);
 
-    int ret = myRecv(recv_str, user->socket_fd);
-
-    if (ret == -1) // 接收失败
+    if (recv_str == NULL) // 接收失败
     {
         printf("recv failed!\n");
         return;
@@ -1612,6 +1622,8 @@ void refuse_join_group(User *user, int id)
     {
         // 创建一个名为root的JSON节点
         cJSON *root = cJSON_Parse(recv_str);
+        free(recv_str);
+        recv_str = NULL;
         if (root == NULL)
         {
             printf("parse JSON failed!\n");
